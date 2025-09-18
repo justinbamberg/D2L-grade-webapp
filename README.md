@@ -20,4 +20,4 @@ A lightweight mobile-friendly web app for quickly entering grades directly into 
 - Grade values: `/d2l/api/le/1.85/{orgUnitId}/grades/{gradeId}/values/{userId}`
 
 ---
-© 2025 Delta College (example). Released for collaboration among D2L schools.
+© 2025 Delta College. Released for collaboration among D2L schools.

@@ -1,2 +1,571 @@
-<!-- Field Grades App -->
-<!DOCTYPE html><html><head><title>Field Grades (Mobile)</title></head><body><h1>Field Grades App</h1><p>See README for usage.</p></body></html>
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Field Grades (Mobile)</title>
+<style>
+  :root { --bg:#0b0b0b; --card:#121212; --ink:#f3f3f3; --muted:#b9b9b9; --accent:#2f5e00; --accent2:#1e7f00; --danger:#a40000; }
+  html,body{margin:0;padding:0;background:#0b0b0b;color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+  .wrap{max-width:760px;margin:0 auto;padding:16px;}
+  .card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row>*{flex:1}
+  label{font-size:.9rem;color:var(--muted);display:block;margin-bottom:6px}
+  input,select,button,textarea{
+    width:100%;padding:14px 12px;border-radius:12px;border:1px solid #2a2a2a;background:#0f0f0f;color:var(--ink);font-size:1rem;
+  }
+  button{background:var(--accent);border:none;font-weight:600}
+  button.secondary{background:#1b1b1b;border:1px solid #2a2a2a}
+  button.danger{background:var(--danger)}
+  button:disabled{opacity:.6}
+  .toolbar{display:flex;gap:10px;margin-top:10px}
+  .pill{display:inline-block;background:#1a1a1a;border:1px solid #2a2a2a;color:var(--muted);padding:6px 10px;border-radius:999px;font-size:.85rem}
+  .student-card{margin-top:14px;border:1px solid #222;border-radius:14px;padding:14px;min-height:120px}
+  .bigname{font-size:1.25rem;font-weight:700;margin-bottom:4px}
+  .sub{color:var(--muted);font-size:.95rem}
+  .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;background:#151515;border:1px solid #2a2a2a;border-radius:6px;padding:2px 6px}
+  .status{margin-top:10px;font-size:.9rem;color:var(--muted)}
+  .ok{color:#4caf50}
+  .err{color:#ff6b6b}
+  .footer{margin-top:18px;display:flex;gap:10px}
+  .divider{height:1px;background:#222;margin:14px 0}
+</style>
+</head><body><div class="wrap">
+<div class="card">
+<h2 style="margin: 0 0 10px 0;">Field Grades (Mobile)</h2>
+<div class="help">Enter your <span class="kbd">OrgUnitId</span>, pick a grade item, and swipe or tap Next to move through students. Save writes to the Brightspace gradebook.</div>
+<div class="row" style="margin-top: 12px;">
+<div><label for="ou">OrgUnitId</label> <input id="ou" inputmode="numeric" placeholder="e.g., 2987421" type="text"></div>
+<div><label>&nbsp;</label> <button id="loadBtn">Load Course</button></div>
+</div>
+<div id="courseArea" style="display: none;">
+<div class="row" style="margin-top: 10px;">
+<div><label for="gradeItem">Grade Item</label><select id="gradeItem"></select></div>
+<div><label for="search">Find Student</label> <input id="search" placeholder="type name or OrgDefinedId" type="text"></div>
+</div>
+<!-- Prev/Next row (prevents overlap with inputs) -->
+<div class="row" style="margin: 10px 0;">
+<div><button class="prev" id="prevBtn">◀ Prev</button></div>
+<div><button class="next" id="nextBtn">Next ▶</button></div>
+</div>
+<div class="student-card" id="studentCard">
+<div id="studentBox">
+<div class="bigname" id="studentName">—</div>
+<div class="sub" id="studentMeta">UserId • OrgDefinedId</div>
+</div>
+<div class="divider"></div>
+<div id="entryBox">
+<div id="numericBox" style="display: none;" class="row">
+<div style="flex: 1;"><label for="points">Points</label> <input id="points" type="number" step="0.01" min="0"></div>
+<div style="width: 140px;"><label for="denom">Out of</label> <input id="denom" type="number" step="0.01" min="0" disabled="disabled"></div>
+</div>
+<div id="schemeBox" style="display: none;"><label for="schemeSelect">Select value</label><select id="schemeSelect"></select></div>
+<div style="margin-top: 10px;"><label for="comment">Comment (optional)</label> <textarea id="comment" rows="2" placeholder="e.g., Observed in field @ 9/18 10:15am"></textarea></div>
+</div>
+<div class="footer"><button id="saveOne">Save for this student</button> <button class="secondary" id="skip">Skip</button> <button class="secondary" id="clearVal">Clear</button></div>
+<div class="toolbar"><span class="pill" id="posIdx">0 / 0</span> <span class="pill" id="itemType">Type: —</span> <span class="pill" id="queueCount">Queued: 0</span></div>
+<div class="status" id="status"></div>
+</div>
+<div class="toolbar" style="margin-top: 12px;"><button id="saveAll" class="accent2" style="background: var(--accent2);">Save All</button> <button id="sync" class="secondary">Retry Failed</button> <button id="clearQueue" class="danger">Clear Queue</button></div>
+</div>
+</div>
+</div>
+<p><script>
+/* =========================
+   CONFIG
+========================= */
+var STUDENT_ROLE_ID = 101;   // Student role in your org
+var GRADES_API_VER   = "1.85";
+var CLASSLIST_VER    = "1.86";
+
+/* =========================
+   XSRF + FETCH
+========================= */
+var _xsrfToken = null;
+async function ensureXsrf(){
+  if(_xsrfToken){ return _xsrfToken; }
+  var ls = window.localStorage;
+  var keys = ["D2L-XSRF","XSRF.Token","X-Csrf-Token","csrfToken","XsrfToken"];
+  for (var i=0;i<keys.length;i++){
+    var v = ls.getItem(keys[i]);
+    if (v && v.length > 8){ _xsrfToken = v; return _xsrfToken; }
+  }
+  try{
+    var res = await fetch("/d2l/lp/auth/xsrf-tokens", { method:"GET", credentials:"include" });
+    if(res.ok){
+      var data = await res.json();
+      _xsrfToken = data.XsrfToken || data.csrfToken || null;
+    }
+  }catch(e){ /* ignore */ }
+  return _xsrfToken;
+}
+
+async function BrightspaceFetch(url, opts){
+  if(!opts){ opts = {}; }
+  var method  = opts.method || "GET";
+  var headers = opts.headers || {};
+  if(method !== "GET" && method !== "HEAD"){
+    var tok = await ensureXsrf();
+    if(tok){ headers["X-Csrf-Token"] = tok; }
+    headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  }
+  opts.headers = headers;
+  opts.credentials = "include";
+
+  const res = await fetch(url, opts);
+  if(!res.ok){
+    let text = "";
+    try{ text = await res.text(); }catch(_){}
+    throw new Error("HTTP " + res.status + " - " + text);
+  }
+  const ct = res.headers.get("Content-Type") || "";
+  return (ct.indexOf("application/json") >= 0) ? res.json() : res.text();
+}
+
+/* =========================
+   STATE
+========================= */
+var state = {
+  ou: null,
+  students: [],      // [{UserId, OrgDefinedId, FirstName, LastName}]
+  idx: 0,
+  gradeItems: [],
+  selectedItem: null
+};
+
+/* =========================
+   DOM
+========================= */
+var ouInput       = document.getElementById("ou");
+var loadBtn       = document.getElementById("loadBtn");
+var courseArea    = document.getElementById("courseArea");
+var gradeItemSel  = document.getElementById("gradeItem");
+var searchInput   = document.getElementById("search");
+var studentName   = document.getElementById("studentName");
+var studentMeta   = document.getElementById("studentMeta");
+var posIdx        = document.getElementById("posIdx");
+var itemType      = document.getElementById("itemType");
+var numericBox    = document.getElementById("numericBox");
+var pointsInput   = document.getElementById("points");
+var denomInput    = document.getElementById("denom");
+var schemeBox     = document.getElementById("schemeBox");
+var schemeSelect  = document.getElementById("schemeSelect");
+var commentInput  = document.getElementById("comment");
+var saveOneBtn    = document.getElementById("saveOne");
+var skipBtn       = document.getElementById("skip");
+var clearValBtn   = document.getElementById("clearVal");
+var prevBtn       = document.getElementById("prevBtn");
+var nextBtn       = document.getElementById("nextBtn");
+var studentCard   = document.getElementById("studentCard");
+var queueCount    = document.getElementById("queueCount");
+var statusBox     = document.getElementById("status");
+
+/* Create a lightweight "current grade" notice above the entry area */
+var currentNoticeEl = null;
+function ensureCurrentNotice(){
+  if(currentNoticeEl) return currentNoticeEl;
+  currentNoticeEl = document.createElement("div");
+  currentNoticeEl.id = "currentNotice";
+  currentNoticeEl.style.margin = "6px 0 10px 0";
+  currentNoticeEl.style.fontSize = ".95rem";
+  currentNoticeEl.style.color = "var(--muted)";
+  currentNoticeEl.style.border = "1px solid #222";
+  currentNoticeEl.style.borderRadius = "10px";
+  currentNoticeEl.style.padding = "8px 10px";
+  currentNoticeEl.style.background = "#131313";
+  // insert right above the entry box
+  var entryBox = document.getElementById("entryBox");
+  entryBox.parentNode.insertBefore(currentNoticeEl, entryBox);
+  return currentNoticeEl;
+}
+
+/* Hide queue-related UI (we save immediately) */
+(function(){ 
+  var el;
+  if((el=document.getElementById("saveAll")))   el.style.display="none";
+  if((el=document.getElementById("sync")))      el.style.display="none";
+  if((el=document.getElementById("clearQueue")))el.style.display="none";
+  if(queueCount) queueCount.style.display="none";
+})();
+
+/* =========================
+   LOAD COURSE
+========================= */
+loadBtn.addEventListener("click", async function(){
+  disableAll(true);
+  resetStatus();
+  try{
+    const ou = (ouInput.value || "").trim();
+    if(!ou){ throw new Error("Enter an OrgUnitId"); }
+    state.ou = ou; state.idx = 0;
+
+    statusMsg("Loading students…");
+    state.students = await fetchStudentsFromClasslist(ou);
+    if(state.students.length === 0){ throw new Error("No students (role 101) found."); }
+
+    statusMsg("Loading grade items…");
+    state.gradeItems = await BrightspaceFetch("/d2l/api/le/" + GRADES_API_VER + "/" + ou + "/grades/", { method:"GET" });
+    buildGradeItemSelect(state.gradeItems);
+
+    courseArea.style.display = "block";
+    if(state.gradeItems.length > 0){ setSelectedItemById(state.gradeItems[0].Id); }
+    showCurrentStudent();  // will also fetch current grade
+    enableSwipe();
+    okMsg("Course loaded.");
+  }catch(e){
+    errMsg(e.message);
+  }finally{
+    disableAll(false);
+  }
+});
+
+/* =========================
+   FETCH STUDENTS (LE Classlist only, filter to role 101)
+========================= */
+async function fetchStudentsFromClasslist(ou){
+  const out = [];
+  let bookmark = null;
+  const pageSize = 100;
+
+  while(true){
+    let url = "/d2l/api/le/" + CLASSLIST_VER + "/" + ou + "/classlist/paged/?pageSize=" + String(pageSize);
+    if(bookmark){ url += "&bookmark=" + encodeURIComponent(bookmark); }
+
+    const data = await BrightspaceFetch(url, { method:"GET" });
+    const arr  = data.Objects || data.Items || [];
+    for(let i=0;i<arr.length;i++){
+      const u = arr[i];
+
+      const rid = (typeof u.RoleId === "number") ? u.RoleId
+                : (u.Role && typeof u.Role.Id === "number") ? u.Role.Id
+                : (u.Access && typeof u.Access.RoleId === "number") ? u.Access.RoleId
+                : null;
+      if(rid !== STUDENT_ROLE_ID) continue;
+
+      const uid  = (typeof u.UserId === "number") ? u.UserId
+                 : (u.User && typeof u.User.UserId === "number") ? u.User.UserId
+                 : (u.User && typeof u.User.Id === "number") ? u.User.Id
+                 : (typeof u.Identifier === "number") ? u.Identifier
+                 : (typeof u.Identifier === "string" && /^\d+$/.test(u.Identifier)) ? parseInt(u.Identifier,10)
+                 : null;
+      if(uid == null) continue;
+
+      let fn = u.FirstName || (u.User && u.User.FirstName) || "";
+      let ln = u.LastName  || (u.User && u.User.LastName)  || "";
+      if((!fn || !ln) && u.DisplayName && u.DisplayName.indexOf(",")>0){
+        const parts = u.DisplayName.split(",");
+        ln = ln || (parts[0]||"").trim();
+        fn = fn || (parts[1]||"").trim();
+      }
+
+      const odi = (u.OrgDefinedId != null) ? String(u.OrgDefinedId)
+                 : (typeof u.Identifier === "string" ? u.Identifier : "");
+
+      out.push({ UserId: uid, OrgDefinedId: odi, FirstName: fn, LastName: ln });
+    }
+
+    if(!data.PagingInfo || !data.PagingInfo.Bookmark) break;
+    bookmark = data.PagingInfo.Bookmark;
+  }
+
+  out.sort(function(a,b){
+    const an = (a.LastName||"") + "," + (a.FirstName||"");
+    const bn = (b.LastName||"") + "," + (b.FirstName||"");
+    return an.localeCompare(bn);
+  });
+  return out;
+}
+
+/* =========================
+   GRADE ITEMS
+========================= */
+function buildGradeItemSelect(items){
+  gradeItemSel.innerHTML = "";
+  for(let i=0;i<items.length;i++){
+    const it = items[i];
+    const opt = document.createElement("option");
+    opt.value = String(it.Id);
+    opt.textContent = it.Name + " (" + it.GradeType + ")";
+    gradeItemSel.appendChild(opt);
+  }
+}
+gradeItemSel.addEventListener("change", function(){
+  setSelectedItemById(this.value);
+  showCurrentStudent(); // refresh + fetch current grade for this item
+});
+function setSelectedItemById(id){
+  id = Number(id);
+  let found = null;
+  for(let i=0;i<state.gradeItems.length;i++){
+    if(Number(state.gradeItems[i].Id) === id){ found = state.gradeItems[i]; break; }
+  }
+  state.selectedItem = found;
+  if(!found){ numericBox.style.display="none"; schemeBox.style.display="none"; itemType.textContent="Type: —"; return; }
+
+  const gtype = found.GradeType || (found.Grading && found.Grading.GradeType) || "Unknown";
+  itemType.textContent = "Type: " + gtype;
+
+  if(gtype === "Numeric"){
+    numericBox.style.display = "flex";
+    schemeBox.style.display  = "none";
+    const maxPts = (found.MaxPoints != null) ? found.MaxPoints :
+                   (found.OutOf    != null) ? found.OutOf    : null;
+    denomInput.value = (maxPts != null) ? String(maxPts) : "";
+    pointsInput.placeholder = (maxPts != null) ? ("0 – " + maxPts) : "points";
+  }else if(gtype === "SelectBox" || gtype === "PassFail"){
+    numericBox.style.display = "none";
+    schemeBox.style.display  = "block";
+    schemeSelect.innerHTML = "";
+    const opts = (found.Options && found.Options.length)
+      ? found.Options.map(o => o.Name || o.Text)
+      : (gtype === "PassFail" ? ["Pass","Fail"] : ["Met","Not Met"]);
+    for(let k=0;k<opts.length;k++){
+      const so = document.createElement("option");
+      so.value = so.textContent = opts[k];
+      schemeSelect.appendChild(so);
+    }
+  }else{
+    numericBox.style.display = "none";
+    schemeBox.style.display  = "block";
+    schemeSelect.innerHTML = "";
+    const so = document.createElement("option");
+    so.value = ""; so.textContent = "(no scheme)";
+    schemeSelect.appendChild(so);
+  }
+}
+
+/* =========================
+   UI helpers
+========================= */
+function filteredStudents(){
+  const q = (searchInput.value || "").trim().toLowerCase();
+  if(!q){ return state.students; }
+  const out = [];
+  for(let i=0;i<state.students.length;i++){
+    const s = state.students[i];
+    const hay = (s.FirstName+" "+s.LastName+" "+(s.OrgDefinedId||"")).toLowerCase();
+    if(hay.indexOf(q) >= 0){ out.push(s); }
+  }
+  return out;
+}
+
+function updateNavButtons(){
+  const students = filteredStudents();
+  const atStart = state.idx <= 0;
+  const atEnd   = state.idx >= (students.length - 1);
+  prevBtn.disabled = atStart;
+  nextBtn.disabled = atEnd;
+  // Also gray out Skip when at end (optional)
+  skipBtn.disabled = atEnd;
+}
+
+async function showCurrentStudent(){
+  const students = filteredStudents();
+  if(students.length === 0){
+    studentName.textContent = "No matching students";
+    studentMeta.textContent = "—";
+    posIdx.textContent      = "0 / 0";
+    ensureCurrentNotice().textContent = "NOTICE: No current grade (no students match).";
+    updateNavButtons();
+    return;
+  }
+  if(state.idx < 0){ state.idx = 0; }
+  if(state.idx >= students.length){ state.idx = students.length-1; }
+  const s = students[state.idx];
+
+  studentName.textContent = (s.LastName||"") + ", " + (s.FirstName||"");
+  studentMeta.textContent = "UserId " + (s.UserId != null ? s.UserId : "—") + " • OrgDefinedId " + (s.OrgDefinedId || "—");
+  posIdx.textContent      = String(state.idx+1) + " / " + String(students.length);
+
+  // Reset local inputs
+  pointsInput.value = "";
+  commentInput.value = "";
+  if(schemeSelect.options.length > 0){ schemeSelect.selectedIndex = 0; }
+
+  // Fetch and show current grade notice (non-blocking)
+  try{
+    await showCurrentGradeNotice(s.UserId);
+  }catch(e){
+    ensureCurrentNotice().textContent = "NOTICE: Couldn’t fetch current grade.";
+  }
+
+  updateNavButtons();
+}
+
+searchInput.addEventListener("input", function(){ state.idx = 0; showCurrentStudent(); });
+prevBtn.addEventListener("click", function(){ state.idx -= 1; showCurrentStudent(); });
+nextBtn.addEventListener("click", function(){ state.idx += 1; showCurrentStudent(); });
+
+/* Swipe */
+function enableSwipe(){
+  var startX = 0, endX = 0;
+  studentCard.addEventListener("touchstart", function(e){ startX = e.changedTouches[0].screenX; });
+  studentCard.addEventListener("touchend", function(e){
+    endX = e.changedTouches[0].screenX;
+    var dx = endX - startX;
+    if(Math.abs(dx) > 50){
+      if(dx < 0){ state.idx += 1; } else { state.idx -= 1; }
+      showCurrentStudent();
+    }
+  });
+}
+
+/* =========================
+   CURRENT GRADE NOTICE (fetch from server)
+========================= */
+async function showCurrentGradeNotice(userId){
+  if(!state.selectedItem || !state.ou || !userId){ 
+    ensureCurrentNotice().textContent = "NOTICE: Current grade not available.";
+    return;
+  }
+  const itemId = Number(state.selectedItem.Id);
+  const url = "/d2l/api/le/" + GRADES_API_VER + "/" + state.ou + "/grades/" + itemId + "/values/" + userId;
+  let data = null;
+  try{
+    data = await BrightspaceFetch(url, { method:"GET" });
+  }catch(e){
+    ensureCurrentNotice().textContent = "NOTICE: No current grade or not retrievable.";
+    return;
+  }
+
+  // Normalize output across types/shapes
+  const gtype = state.selectedItem.GradeType || (state.selectedItem.Grading && state.selectedItem.Grading.GradeType) || "Unknown";
+  let line = "NOTICE: ";
+
+  if(gtype === "Numeric"){
+    // Try common shapes: PointsNumerator, PointsDenominator, or nested Value
+    const v = data || {};
+    const pn = typeof v.PointsNumerator === "number" ? v.PointsNumerator
+             : (v.Value && typeof v.Value.PointsNumerator === "number" ? v.Value.PointsNumerator : null);
+    const pd = typeof v.PointsDenominator === "number" ? v.PointsDenominator
+             : (v.Value && typeof v.Value.PointsDenominator === "number" ? v.Value.PointsDenominator : null);
+
+    if(pn != null){
+      line += "Current numeric grade: " + pn + (pd != null ? (" / " + pd) : "") + ".";
+      // Prefill the input with current points (you can overwrite)
+      pointsInput.value = String(pn);
+      if(pd != null && !isNaN(pd)) denomInput.value = String(pd);
+    }else{
+      line += "No current numeric grade.";
+    }
+  }else if(gtype === "SelectBox"){
+    const val = (data && (data.Value || data.Text || data.DisplayedGrade)) || "";
+    line += val ? ("Current value: " + val + ".") : "No current value.";
+  }else if(gtype === "PassFail"){
+    const pass = (data && (typeof data.Pass === "boolean" ? data.Pass : null));
+    if(pass === true)      line += "Current value: Pass.";
+    else if(pass === false)line += "Current value: Fail.";
+    else                   line += "No current value.";
+  }else{
+    const txt = (data && (data.Text || data.Value || data.DisplayedGrade)) || "";
+    line += txt ? ("Current text: " + txt + ".") : "No current value.";
+  }
+
+  ensureCurrentNotice().textContent = line;
+}
+
+/* =========================
+   SAVE (immediate push)
+========================= */
+saveOneBtn.addEventListener("click", async function(){
+  resetStatus();
+  try{
+    const students = filteredStudents();
+    if(students.length === 0){ throw new Error("No student selected."); }
+    const s = students[state.idx];
+    if(!state.selectedItem){ throw new Error("Pick a grade item first."); }
+    if(s.UserId == null){ throw new Error("Selected student is missing a UserId."); }
+
+    const payload = buildPayloadForSelected();
+    const itemId  = Number(state.selectedItem.Id);
+    const url     = "/d2l/api/le/" + GRADES_API_VER + "/" + state.ou + "/grades/" + itemId + "/values/" + s.UserId;
+
+    disableAll(true);
+    await BrightspaceFetch(url, { method:"PUT", body: JSON.stringify(payload) });
+    okMsg("Saved for " + s.LastName + ", " + s.FirstName + ".");
+    state.idx += 1; showCurrentStudent();
+  }catch(e){
+    errMsg(e.message);
+  }finally{
+    disableAll(false);
+  }
+});
+
+/* =========================
+   BUILD PAYLOAD (matches your tenant)
+========================= */
+function buildPayloadForSelected(){
+  const it = state.selectedItem;
+  const gtype = it.GradeType || (it.Grading && it.Grading.GradeType) || "Unknown";
+
+  const comment = (commentInput.value || "").trim();
+  const Comments        = { Content: comment, Type: "Text" };
+  const PrivateComments = { Content: "",      Type: "Text" };
+
+  if (gtype === "Numeric") {
+    const numStr = pointsInput.value.trim();
+    if (numStr === "") { throw new Error("Enter points."); }
+    const pn = parseFloat(numStr);
+
+    const denomStr = denomInput.value.trim();
+    const payload = {
+      Comments, PrivateComments,
+      GradeObjectType: 1,
+      PointsNumerator: pn
+    };
+    if (denomStr !== "") {
+      const pd = parseFloat(denomStr);
+      if (!isNaN(pd)) payload.PointsDenominator = pd;
+    }
+    return payload;
+  }
+
+  if (gtype === "PassFail") {
+    const val = (schemeSelect.value || "").toLowerCase();
+    const pass = val.startsWith("p"); // Pass/Fail
+    return {
+      Comments, PrivateComments,
+      GradeObjectType: 2,
+      Pass: !!pass
+    };
+  }
+
+  if (gtype === "SelectBox") {
+    const val = schemeSelect.value;
+    if (!val) { throw new Error("Select a value."); }
+    return {
+      Comments, PrivateComments,
+      GradeObjectType: 3,
+      Value: val
+    };
+  }
+
+  // Text fallback
+  const txt = schemeSelect.value || "";
+  if (!txt && !comment) { throw new Error("No value/comment to send."); }
+  return {
+    Comments, PrivateComments,
+    GradeObjectType: 4,
+    Text: txt
+  };
+}
+
+/* =========================
+   MISC UI
+========================= */
+skipBtn.addEventListener("click", function(){ state.idx += 1; showCurrentStudent(); });
+clearValBtn.addEventListener("click", function(){
+  pointsInput.value = ""; 
+  commentInput.value = "";
+  if(schemeSelect.options.length > 0){ schemeSelect.selectedIndex = 0; }
+});
+
+function disableAll(on){
+  var els = document.querySelectorAll("input,select,button,textarea");
+  for(var i=0;i<els.length;i++){ els[i].disabled = !!on; }
+}
+function statusMsg(t){ statusBox.innerHTML = t; }
+function okMsg(t){ statusBox.innerHTML = "<span class='ok'>"+ t +"</span>"; }
+function errMsg(t){ statusBox.innerHTML = "<span class='err'>"+ t +"</span>"; }
+function resetStatus(){ statusBox.textContent = ""; }
+</script></p></body></html>

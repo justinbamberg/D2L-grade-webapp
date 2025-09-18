@@ -3,7 +3,7 @@
 This guide is for **instructors** and **field evaluators** who will use the app inside Brightspace.
 
 ## Quick Start
-1. Open the **Field Grades** link in your course (your admin will add it to Content or the navbar).
+1. Open the **Field Grades** link provided to you.
 2. Enter your **OrgUnitId** (find it in your course URL: `.../d2l/home/{ou}`).
 3. Click **Load Course**.
 4. Choose a **Grade Item** from the dropdown.

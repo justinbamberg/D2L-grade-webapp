@@ -20,6 +20,14 @@ This guide is for **Brightspace admins** (or course designers with Manage Files 
    - Copy the browser URL you see (this is the direct link used in Step 6 below).
 5. (Optional) If your org uses a public/static hosting area, you may use that URL instead.
 6. **Create a link for instructors** (two common options):
+   - **Content Link (global):**
+     - Go to Admin Tools
+     - External Links
+     - New Link
+     - Then click on the External Links page at top
+     - Find the new link you create
+     - Click the link to open in a new tab
+     - Copy URL to webapp
    - **Content Link (per course):**
      - In the target course, go to **Content → +Add Existing → Create a Link** (or *New → Create a Link*).
      - Title: **Field Grades (Mobile)**
